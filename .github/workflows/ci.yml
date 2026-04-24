@@ -25,10 +25,14 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: web/package-lock.json
+      # `-tags dev` picks up web/embed_dev.go instead of web/embed.go, so we
+      # don't need `web/dist/` on disk just to run tests/vet. The embed_dev
+      # stub returns nil (Vite serves the frontend in dev); the real embed is
+      # exercised by the docker-build jobs below.
       - name: Go test
-        run: go test -race ./...
+        run: go test -tags dev -race ./...
       - name: Go vet
-        run: go vet ./...
+        run: go vet -tags dev ./...
       - name: Frontend install
         working-directory: web
         run: npm ci

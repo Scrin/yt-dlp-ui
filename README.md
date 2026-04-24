@@ -161,14 +161,19 @@ Open http://localhost:5173 — the Vite dev server proxies `/api` and
 ### Tests and linting
 
 ```bash
-go test ./...
-go vet ./...
+go test -tags dev ./...
+go vet -tags dev ./...
 cd web && npm run lint && npm run build
 ```
 
-`go test ./...` runs the filename-contract tests that lock the
+`go test` runs the filename-contract tests that lock the
 `<height>p_<vcodec>_<acodec>` shape, codec normalisation, and the
 `.tmp.*` → final-name rename. CI runs these on every push and pull request.
+
+The `-tags dev` selects `web/embed_dev.go` over `web/embed.go`, skipping the
+`//go:embed dist/*` directive so you don't need to build the frontend just
+to run the Go tests. The real embed is exercised when you build for
+production (either `npm run build && go build` or `docker build`).
 
 ### Building
 
