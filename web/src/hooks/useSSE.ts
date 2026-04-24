@@ -1,52 +1,65 @@
-import { useEffect, useRef, useCallback, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Job, SSEEvent } from "../types";
 
-export function useSSE() {
+// useSSE subscribes to the server's Server-Sent Events stream (/api/events)
+// and maintains a live Map of jobs keyed by id. On connection error it
+// reconnects with a 2-second backoff. Pending reconnect timers and open
+// EventSource connections are cleaned up on unmount so the hook is safe in
+// React StrictMode (where effects run twice in development).
+export function useSSE(): { jobs: Map<string, Job>; connected: boolean } {
   const [jobs, setJobs] = useState<Map<string, Job>>(new Map());
   const [connected, setConnected] = useState(false);
   const esRef = useRef<EventSource | null>(null);
 
-  const connect = useCallback(() => {
-    if (esRef.current) {
-      esRef.current.close();
-    }
+  useEffect(() => {
+    let cancelled = false;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
-    const es = new EventSource("/api/events");
-    esRef.current = es;
+    // connect is defined inside the effect so it can recurse via setTimeout
+    // without the function self-referencing its own `const` binding (which
+    // ESLint's react-hooks/immutability flags).
+    const connect = () => {
+      if (cancelled) return;
+      esRef.current?.close();
 
-    es.onopen = () => setConnected(true);
+      const es = new EventSource("/api/events");
+      esRef.current = es;
 
-    es.onmessage = (e) => {
-      try {
-        const event: SSEEvent = JSON.parse(e.data);
-        setJobs((prev) => {
-          const next = new Map(prev);
-          if (event.type === "job:removed") {
-            next.delete(event.job.id);
-          } else {
-            next.set(event.job.id, event.job);
-          }
-          return next;
-        });
-      } catch {
-        // Ignore parse errors
-      }
+      es.onopen = () => setConnected(true);
+
+      es.onmessage = (e) => {
+        try {
+          const event: SSEEvent = JSON.parse(e.data);
+          setJobs((prev) => {
+            const next = new Map(prev);
+            if (event.type === "job:removed") {
+              next.delete(event.job.id);
+            } else {
+              next.set(event.job.id, event.job);
+            }
+            return next;
+          });
+        } catch {
+          // Ignore malformed events; state will self-correct on reconnect.
+        }
+      };
+
+      es.onerror = () => {
+        setConnected(false);
+        es.close();
+        reconnectTimer = setTimeout(connect, 2000);
+      };
     };
 
-    es.onerror = () => {
-      setConnected(false);
-      es.close();
-      // Reconnect after 2 seconds
-      setTimeout(connect, 2000);
+    connect();
+
+    return () => {
+      cancelled = true;
+      if (reconnectTimer !== null) clearTimeout(reconnectTimer);
+      esRef.current?.close();
+      esRef.current = null;
     };
   }, []);
-
-  useEffect(() => {
-    connect();
-    return () => {
-      esRef.current?.close();
-    };
-  }, [connect]);
 
   return { jobs, connected };
 }

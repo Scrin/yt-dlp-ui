@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import type { PlaylistInfo } from "../types";
+import type { PlaylistEntry, PlaylistInfo } from "../types";
 import { startPlaylistItemDownload } from "../lib/api";
 import { useExistingDownloads } from "../hooks/useExistingDownloads";
 import { extractQualityTag } from "../lib/filenameId";
@@ -85,7 +85,7 @@ export function PlaylistPicker({ playlist, onClose }: Props) {
   // user selection would submit N downloads for the same video.
   const entries = useMemo(() => {
     const seen = new Set<string>();
-    const out: typeof playlist.entries = [];
+    const out: PlaylistEntry[] = [];
     for (const e of playlist.entries) {
       if (!e.id || seen.has(e.id)) continue;
       seen.add(e.id);

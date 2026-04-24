@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"time"
 
@@ -61,7 +60,3 @@ func handleSSE(mgr *downloader.Manager) gin.HandlerFunc {
 	}
 }
 
-// handleSSEPost provides a streaming alternative for environments where
-// EventSource is not available. It accepts POST and streams responses.
-// Not used in MVP but reserved for future use.
-var _ = io.Discard

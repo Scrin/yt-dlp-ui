@@ -14,7 +14,9 @@ import (
 	"time"
 )
 
-// VideoInfo represents metadata returned by yt-dlp -j.
+// VideoInfo is the single-video shape of `yt-dlp -J --flat-playlist`'s JSON
+// output (populated when Resolve determines the URL points at a video, not
+// a playlist). Includes the full list of available formats.
 type VideoInfo struct {
 	ID          string   `json:"id"`
 	Title       string   `json:"title"`
