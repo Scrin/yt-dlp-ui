@@ -77,7 +77,7 @@ This is an intentional contract, enforced by Go tests in
 `internal/downloader/manager_test.go`. If you fork and change the tag shape,
 those tests will fail loudly.
 
-The tag is inserted *after* the download completes from yt-dlp's
+The tag is inserted _after_ the download completes from yt-dlp's
 `--print after_move:` output, so single-video and playlist flows produce
 identical filenames for identical content.
 
@@ -103,13 +103,13 @@ Downloaded files live in the `yt-dlp-downloads` named volume (mounted at
 
 All configuration is via environment variables:
 
-| Variable         | Default       | Description                                                                                                   |
-| ---------------- | ------------- | ------------------------------------------------------------------------------------------------------------- |
-| `PORT`           | `8080`        | Server listen port.                                                                                           |
-| `DOWNLOAD_DIR`   | `./downloads` | Directory for downloaded files.                                                                               |
-| `MAX_CONCURRENT` | `2`           | Maximum parallel downloads (worker pool size).                                                                |
-| `YT_DLP_PATH`    | `yt-dlp`      | Path or name of the yt-dlp binary.                                                                            |
-| `FFMPEG_PATH`    | *(unset)*     | Optional path to ffmpeg. Directory containing `ffmpeg`+`ffprobe`, or a full binary path. Empty uses `$PATH`.  |
+| Variable         | Default       | Description                                                                                                  |
+| ---------------- | ------------- | ------------------------------------------------------------------------------------------------------------ |
+| `PORT`           | `8080`        | Server listen port.                                                                                          |
+| `DOWNLOAD_DIR`   | `./downloads` | Directory for downloaded files.                                                                              |
+| `MAX_CONCURRENT` | `2`           | Maximum parallel downloads (worker pool size).                                                               |
+| `YT_DLP_PATH`    | `yt-dlp`      | Path or name of the yt-dlp binary.                                                                           |
+| `FFMPEG_PATH`    | _(unset)_     | Optional path to ffmpeg. Directory containing `ffmpeg`+`ffprobe`, or a full binary path. Empty uses `$PATH`. |
 
 In the container image, `DOWNLOAD_DIR` defaults to `/downloads` and `PORT`
 to `8080`. `ffmpeg` is installed on `$PATH` inside the container, so
@@ -135,19 +135,22 @@ If you only ever download audio-only or pre-combined formats, you can run
 without ffmpeg installed and picks that need it will fail with a clear
 yt-dlp error. In practice, installing ffmpeg is cheap and recommended.
 
+Note that the prebuilt docker image contains ffmpeg automatically, so
+nothing extra is required in that case.
+
 ## Playlist download profiles
 
 When the pasted URL resolves to a playlist, the picker offers these codec
 preferences. Each maps to a yt-dlp `-f` expression that's passed verbatim.
 
-| Profile                           | Selector                                                    |
-| --------------------------------- | ----------------------------------------------------------- |
-| VP9 + Opus (best for YouTube)     | `bv[vcodec^=vp9]+ba[acodec^=opus]/bv*+ba*/b`                |
-| AV1 + Opus (smaller, newer)       | `bv[vcodec^=av01]+ba[acodec^=opus]/bv*+ba*/b`               |
-| H.264 + AAC (mp4 compatibility)   | `bv[vcodec^=avc1]+ba[acodec^=mp4a]/b[ext=mp4]/b`            |
-| Best available (any codec)        | `bv*+ba*/b`                                                 |
-| Audio only — Opus                 | `ba*[acodec^=opus]/ba*/b`                                   |
-| Audio only — AAC/m4a              | `ba*[ext=m4a]/ba*/b`                                        |
+| Profile                         | Selector                                         |
+| ------------------------------- | ------------------------------------------------ |
+| VP9 + Opus (best for YouTube)   | `bv[vcodec^=vp9]+ba[acodec^=opus]/bv*+ba*/b`     |
+| AV1 + Opus (smaller, newer)     | `bv[vcodec^=av01]+ba[acodec^=opus]/bv*+ba*/b`    |
+| H.264 + AAC (mp4 compatibility) | `bv[vcodec^=avc1]+ba[acodec^=mp4a]/b[ext=mp4]/b` |
+| Best available (any codec)      | `bv*+ba*/b`                                      |
+| Audio only — Opus               | `ba*[acodec^=opus]/ba*/b`                        |
+| Audio only — AAC/m4a            | `ba*[ext=m4a]/ba*/b`                             |
 
 An "Advanced" section lets you paste an arbitrary yt-dlp format selector
 for cases the profiles don't cover.
