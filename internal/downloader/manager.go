@@ -77,7 +77,11 @@ func buildQualityTag(height int, abr float64, vcodec, acodec string) string {
 	if vc == "" || vc == "none" {
 		vc = "video"
 	}
-	return fmt.Sprintf("%dp_%s", height, sanitize(vc))
+	tag := fmt.Sprintf("%dp_%s", height, sanitize(vc))
+	if acodec != "" && acodec != "none" {
+		tag += "_" + sanitize(acodec)
+	}
+	return tag
 }
 
 // JobEvent is sent to SSE subscribers when job state changes.

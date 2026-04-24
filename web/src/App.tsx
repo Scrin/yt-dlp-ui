@@ -39,6 +39,7 @@ function App() {
 
           {videoInfo && (
             <FormatPicker
+              key={videoInfo.webpage_url}
               videoInfo={videoInfo}
               onClose={() => setVideoInfo(null)}
             />

@@ -21,19 +21,28 @@ export async function fetchFormats(url: string): Promise<VideoInfo> {
 
 export async function startDownload(
   url: string,
-  format: Format,
+  video: Format | null,
+  audio: Format | null,
   title: string
 ): Promise<Job> {
+  if (!video && !audio) {
+    throw new Error("Select a video format, an audio format, or both");
+  }
+
+  const formatId = [video?.format_id, audio?.format_id]
+    .filter((id): id is string => Boolean(id))
+    .join("+");
+
   return request<Job>("/api/downloads", {
     method: "POST",
     body: JSON.stringify({
       url,
-      format_id: format.format_id,
+      format_id: formatId,
       title,
-      height: format.height,
-      vcodec: format.vcodec,
-      acodec: format.acodec,
-      abr: format.abr,
+      height: video?.height ?? 0,
+      vcodec: video?.vcodec ?? "",
+      acodec: audio?.acodec ?? video?.acodec ?? "",
+      abr: audio?.abr ?? video?.abr ?? 0,
     }),
   });
 }
