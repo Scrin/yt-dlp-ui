@@ -7,6 +7,10 @@ type Config struct {
 	DownloadDir   string
 	MaxConcurrent int
 	YtDlpPath     string
+	// FfmpegPath is passed to yt-dlp as --ffmpeg-location when non-empty.
+	// Accepts either a directory containing ffmpeg+ffprobe or a full binary
+	// path. Empty means "let yt-dlp find it on $PATH" (the usual case).
+	FfmpegPath string
 }
 
 func Load() *Config {
@@ -15,6 +19,7 @@ func Load() *Config {
 		DownloadDir:   getEnv("DOWNLOAD_DIR", "./downloads"),
 		MaxConcurrent: getEnvInt("MAX_CONCURRENT", 2),
 		YtDlpPath:     getEnv("YT_DLP_PATH", "yt-dlp"),
+		FfmpegPath:    os.Getenv("FFMPEG_PATH"),
 	}
 }
 

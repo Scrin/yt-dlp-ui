@@ -24,7 +24,7 @@ func main() {
 		log.Fatalf("Failed to create download directory %s: %v", cfg.DownloadDir, err)
 	}
 
-	ytdlp := downloader.NewYtDlp(cfg.YtDlpPath)
+	ytdlp := downloader.NewYtDlp(cfg.YtDlpPath, cfg.FfmpegPath)
 	mgr := downloader.NewManager(ytdlp, cfg.DownloadDir, cfg.MaxConcurrent)
 
 	webFS, err := web.DistFS()

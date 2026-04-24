@@ -88,11 +88,16 @@ type Progress struct {
 // YtDlp wraps the yt-dlp CLI.
 type YtDlp struct {
 	BinaryPath string
+	// FfmpegPath, when non-empty, is passed to yt-dlp via --ffmpeg-location
+	// during downloads so the merger/post-processor can be found without
+	// relying on $PATH. Accepts a directory or a full binary path.
+	FfmpegPath string
 }
 
-// NewYtDlp creates a new yt-dlp wrapper.
-func NewYtDlp(binaryPath string) *YtDlp {
-	return &YtDlp{BinaryPath: binaryPath}
+// NewYtDlp creates a new yt-dlp wrapper. ffmpegPath may be empty, in which
+// case yt-dlp locates ffmpeg/ffprobe via $PATH as usual.
+func NewYtDlp(binaryPath, ffmpegPath string) *YtDlp {
+	return &YtDlp{BinaryPath: binaryPath, FfmpegPath: ffmpegPath}
 }
 
 // Resolve inspects a URL and returns either a single video (with full format
@@ -296,6 +301,9 @@ func (y *YtDlp) Download(ctx context.Context, url, formatID, outputDir string, p
 
 	if formatID != "" {
 		args = append(args, "-f", formatID)
+	}
+	if y.FfmpegPath != "" {
+		args = append(args, "--ffmpeg-location", y.FfmpegPath)
 	}
 
 	args = append(args, url)

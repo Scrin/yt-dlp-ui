@@ -103,15 +103,37 @@ Downloaded files live in the `yt-dlp-downloads` named volume (mounted at
 
 All configuration is via environment variables:
 
-| Variable         | Default       | Description                                          |
-| ---------------- | ------------- | ---------------------------------------------------- |
-| `PORT`           | `8080`        | Server listen port.                                  |
-| `DOWNLOAD_DIR`   | `./downloads` | Directory for downloaded files.                      |
-| `MAX_CONCURRENT` | `2`           | Maximum parallel downloads (worker pool size).       |
-| `YT_DLP_PATH`    | `yt-dlp`      | Path or name of the yt-dlp binary.                   |
+| Variable         | Default       | Description                                                                                                   |
+| ---------------- | ------------- | ------------------------------------------------------------------------------------------------------------- |
+| `PORT`           | `8080`        | Server listen port.                                                                                           |
+| `DOWNLOAD_DIR`   | `./downloads` | Directory for downloaded files.                                                                               |
+| `MAX_CONCURRENT` | `2`           | Maximum parallel downloads (worker pool size).                                                                |
+| `YT_DLP_PATH`    | `yt-dlp`      | Path or name of the yt-dlp binary.                                                                            |
+| `FFMPEG_PATH`    | *(unset)*     | Optional path to ffmpeg. Directory containing `ffmpeg`+`ffprobe`, or a full binary path. Empty uses `$PATH`.  |
 
 In the container image, `DOWNLOAD_DIR` defaults to `/downloads` and `PORT`
-to `8080`.
+to `8080`. `ffmpeg` is installed on `$PATH` inside the container, so
+`FFMPEG_PATH` is only useful when running the binary outside Docker on a
+system where ffmpeg lives somewhere non-standard.
+
+### When ffmpeg is actually required
+
+yt-dlp only invokes ffmpeg when it has to muxe separate streams together.
+Concretely:
+
+- **Needs ffmpeg**: any format selection with a `+` in it — a video stream
+  merged with an audio stream. All playlist profiles in this UI produce
+  such selections, as does any single-video pick that pairs a video format
+  with an audio format. On YouTube this is the common case, since anything
+  above 720p is served as separate video-only and audio-only streams.
+- **Does NOT need ffmpeg**: a single pre-combined format (e.g., YouTube's
+  format 18, 360p avc1+mp4a bundled in one mp4), a video-only pick without
+  an audio pair, or an audio-only pick saved to its native container
+  (Opus → `.webm`, AAC → `.m4a`).
+
+If you only ever download audio-only or pre-combined formats, you can run
+without ffmpeg installed and picks that need it will fail with a clear
+yt-dlp error. In practice, installing ffmpeg is cheap and recommended.
 
 ## Playlist download profiles
 
@@ -136,8 +158,11 @@ for cases the profiles don't cover.
 
 - Go 1.25+
 - Node.js 22+
-- `yt-dlp` installed and on `PATH` (or point `YT_DLP_PATH` at it)
-- `ffmpeg` on `PATH` (yt-dlp needs it to merge video+audio streams)
+- `yt-dlp` on `PATH` (or point `YT_DLP_PATH` at it)
+- `ffmpeg` on `PATH` (or point `FFMPEG_PATH` at it) — only needed when
+  yt-dlp has to merge separate video+audio streams; see
+  [When ffmpeg is actually required](#when-ffmpeg-is-actually-required)
+  above
 
 ### Running locally
 
