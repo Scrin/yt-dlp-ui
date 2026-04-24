@@ -1,14 +1,15 @@
 import { useState } from "react";
-import type { VideoInfo } from "./types";
+import type { ResolveResult } from "./types";
 import { useSSE } from "./hooks/useSSE";
 import { UrlInput } from "./components/UrlInput";
 import { FormatPicker } from "./components/FormatPicker";
+import { PlaylistPicker } from "./components/PlaylistPicker";
 import { DownloadList } from "./components/DownloadList";
 import { FileList } from "./components/FileList";
 
 function App() {
   const { jobs, connected } = useSSE();
-  const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(null);
+  const [resolved, setResolved] = useState<ResolveResult | null>(null);
 
   const jobList = Array.from(jobs.values()).sort(
     (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
@@ -35,13 +36,21 @@ function App() {
         </header>
 
         <main className="space-y-6">
-          <UrlInput onResult={setVideoInfo} />
+          <UrlInput onResult={setResolved} />
 
-          {videoInfo && (
+          {resolved?.type === "video" && (
             <FormatPicker
-              key={videoInfo.webpage_url}
-              videoInfo={videoInfo}
-              onClose={() => setVideoInfo(null)}
+              key={resolved.video.webpage_url}
+              videoInfo={resolved.video}
+              onClose={() => setResolved(null)}
+            />
+          )}
+
+          {resolved?.type === "playlist" && (
+            <PlaylistPicker
+              key={resolved.playlist.id}
+              playlist={resolved.playlist}
+              onClose={() => setResolved(null)}
             />
           )}
 

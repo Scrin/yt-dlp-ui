@@ -14,7 +14,7 @@ func SetupRoutes(r *gin.Engine, mgr *downloader.Manager, ytdlp *downloader.YtDlp
 	// API routes
 	api := r.Group("/api")
 	{
-		api.POST("/formats", handleFetchFormats(ytdlp))
+		api.POST("/resolve", handleResolveURL(ytdlp))
 		api.POST("/downloads", handleStartDownload(mgr))
 		api.GET("/downloads", handleListDownloads(mgr))
 		api.DELETE("/downloads/:id", handleCancelDownload(mgr))

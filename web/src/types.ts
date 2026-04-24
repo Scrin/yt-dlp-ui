@@ -9,6 +9,24 @@ export interface VideoInfo {
   formats: Format[];
 }
 
+export interface PlaylistEntry {
+  id: string;
+  url: string;
+  title: string;
+  duration: number;
+}
+
+export interface PlaylistInfo {
+  id: string;
+  title: string;
+  uploader: string;
+  entries: PlaylistEntry[];
+}
+
+export type ResolveResult =
+  | { type: "video"; video: VideoInfo }
+  | { type: "playlist"; playlist: PlaylistInfo };
+
 export interface Format {
   format_id: string;
   ext: string;
@@ -53,6 +71,7 @@ export interface Job {
   filename: string;
   error?: string;
   created_at: string;
+  playlist_title?: string;
 }
 
 export interface FileInfo {

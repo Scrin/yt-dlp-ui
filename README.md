@@ -5,12 +5,15 @@ A web UI for downloading video and audio files, powered by [yt-dlp](https://gith
 # Q&A?
 
 Q: Does this support ..?
+
 A: You probably want to use [tubearchivist](https://github.com/tubearchivist/tubearchivist) instead
 
 Q: But I only need to ..
+
 A: You probably want to use [yt-dlp](https://github.com/yt-dlp/yt-dlp) directly instead
 
 Q: So, why?
+
 A: I am lazy, and I didn't want to bother with downloading/installing yt-dlp to whatever device I was using at the time to download whatever one-off video file every now and then. I was looking at existing solutions like the tubearchivist, but it's way overkill for my needs, and as such requires way too much resources, as my server capacity is limited at the moment. Therefore I decided to create this. This uses practically 0% cpu and approximately 2-3MB of RAM when idling.
 
 ## Features

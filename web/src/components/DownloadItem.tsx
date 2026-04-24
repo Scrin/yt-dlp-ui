@@ -55,6 +55,11 @@ export function DownloadItem({ job }: Props) {
       exit={{ opacity: 0, y: -10 }}
       className="rounded-lg border border-zinc-800 bg-zinc-900 p-4"
     >
+      {job.playlist_title && (
+        <p className="mb-1 truncate text-[10px] font-medium uppercase tracking-wider text-zinc-500">
+          Playlist · {job.playlist_title}
+        </p>
+      )}
       <div className="mb-2 flex items-center justify-between gap-3">
         <span className="min-w-0 flex-1 truncate text-sm font-medium">
           {job.title || job.url}

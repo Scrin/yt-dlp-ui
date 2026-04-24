@@ -13,17 +13,15 @@ import (
 )
 
 type formatRequest struct {
-	URL string `json:"url" binding:"required"`
+	URL  string `json:"url" binding:"required"`
+	Mode string `json:"mode"` // "", "video", or "playlist" — disambiguates URLs with both v= and list=
 }
 
 type downloadRequest struct {
-	URL      string  `json:"url" binding:"required"`
-	FormatID string  `json:"format_id"`
-	Title    string  `json:"title"`
-	Height   int     `json:"height"`
-	VCodec   string  `json:"vcodec"`
-	ACodec   string  `json:"acodec"`
-	ABR      float64 `json:"abr"`
+	URL           string `json:"url" binding:"required"`
+	FormatID      string `json:"format_id"`
+	Title         string `json:"title"`
+	PlaylistTitle string `json:"playlist_title"`
 }
 
 type fileInfo struct {
@@ -32,8 +30,9 @@ type fileInfo struct {
 	ModTime time.Time `json:"mod_time"`
 }
 
-// handleFetchFormats fetches available formats for a URL.
-func handleFetchFormats(ytdlp *downloader.YtDlp) gin.HandlerFunc {
+// handleResolveURL resolves a URL to either a single video (with formats) or
+// a playlist (with flat stub entries).
+func handleResolveURL(ytdlp *downloader.YtDlp) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req formatRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
@@ -41,13 +40,13 @@ func handleFetchFormats(ytdlp *downloader.YtDlp) gin.HandlerFunc {
 			return
 		}
 
-		info, err := ytdlp.FetchFormats(c.Request.Context(), req.URL)
+		result, err := ytdlp.Resolve(c.Request.Context(), req.URL, req.Mode)
 		if err != nil {
 			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
 			return
 		}
 
-		c.JSON(http.StatusOK, info)
+		c.JSON(http.StatusOK, result)
 	}
 }
 
@@ -60,7 +59,7 @@ func handleStartDownload(mgr *downloader.Manager) gin.HandlerFunc {
 			return
 		}
 
-		job := mgr.Submit(req.URL, req.FormatID, req.Title, req.Height, req.VCodec, req.ACodec, req.ABR)
+		job := mgr.Submit(req.URL, req.FormatID, req.Title, req.PlaylistTitle)
 		c.JSON(http.StatusAccepted, job)
 	}
 }

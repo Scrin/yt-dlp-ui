@@ -26,6 +26,30 @@ type VideoInfo struct {
 	Formats     []Format `json:"formats"`
 }
 
+// PlaylistInfo is a flat-playlist listing returned by `yt-dlp -J --flat-playlist`.
+type PlaylistInfo struct {
+	ID       string          `json:"id"`
+	Title    string          `json:"title"`
+	Uploader string          `json:"uploader"`
+	Entries  []PlaylistEntry `json:"entries"`
+}
+
+// PlaylistEntry is a single video stub within a PlaylistInfo.
+type PlaylistEntry struct {
+	ID       string  `json:"id"`
+	URL      string  `json:"url"`
+	Title    string  `json:"title"`
+	Duration float64 `json:"duration"`
+}
+
+// ResolveResult is the result of resolving a URL: either a single video with
+// full formats, or a playlist with stub entries.
+type ResolveResult struct {
+	Type     string        `json:"type"` // "video" or "playlist"
+	Video    *VideoInfo    `json:"video,omitempty"`
+	Playlist *PlaylistInfo `json:"playlist,omitempty"`
+}
+
 // Format represents a single available format.
 type Format struct {
 	FormatID    string  `json:"format_id"`
@@ -69,14 +93,26 @@ func NewYtDlp(binaryPath string) *YtDlp {
 	return &YtDlp{BinaryPath: binaryPath}
 }
 
-// FetchFormats retrieves available formats for a URL.
-func (y *YtDlp) FetchFormats(ctx context.Context, url string) (*VideoInfo, error) {
-	cmd := exec.CommandContext(ctx, y.BinaryPath,
-		"-j",
+// Resolve inspects a URL and returns either a single video (with full format
+// list) or a playlist (with flat stub entries, cheap for long playlists).
+// mode disambiguates URLs that contain both a video and a playlist (e.g.
+// YouTube "watch?v=X&list=Y"): "video" forces single-video, "playlist" forces
+// the whole playlist, "" lets yt-dlp apply its own default (playlist).
+func (y *YtDlp) Resolve(ctx context.Context, url, mode string) (*ResolveResult, error) {
+	args := []string{
+		"-J",
+		"--flat-playlist",
 		"--no-warnings",
 		"--color", "never",
-		url,
-	)
+	}
+	switch mode {
+	case "video":
+		args = append(args, "--no-playlist")
+	case "playlist":
+		args = append(args, "--yes-playlist")
+	}
+	args = append(args, url)
+	cmd := exec.CommandContext(ctx, y.BinaryPath, args...)
 
 	out, err := cmd.Output()
 	if err != nil {
@@ -86,11 +122,26 @@ func (y *YtDlp) FetchFormats(ctx context.Context, url string) (*VideoInfo, error
 		return nil, fmt.Errorf("failed to run yt-dlp: %w", err)
 	}
 
-	var info VideoInfo
-	if err := json.Unmarshal(out, &info); err != nil {
+	var peek struct {
+		Type string `json:"_type"`
+	}
+	if err := json.Unmarshal(out, &peek); err != nil {
 		return nil, fmt.Errorf("failed to parse yt-dlp output: %w", err)
 	}
-	return &info, nil
+
+	if peek.Type == "playlist" || peek.Type == "multi_video" {
+		var pl PlaylistInfo
+		if err := json.Unmarshal(out, &pl); err != nil {
+			return nil, fmt.Errorf("failed to parse playlist: %w", err)
+		}
+		return &ResolveResult{Type: "playlist", Playlist: &pl}, nil
+	}
+
+	var vi VideoInfo
+	if err := json.Unmarshal(out, &vi); err != nil {
+		return nil, fmt.Errorf("failed to parse video: %w", err)
+	}
+	return &ResolveResult{Type: "video", Video: &vi}, nil
 }
 
 // parseProgressLine attempts to parse a yt-dlp output line as a progress event.
@@ -124,14 +175,23 @@ func parseProgressLine(line string) (Progress, bool) {
 	return Progress{}, false
 }
 
+// DownloadResult holds the final filepath and the yt-dlp-reported metadata
+// for the resolved format(s), emitted via --print after_move: tagged lines.
+type DownloadResult struct {
+	Path   string
+	Height int
+	VCodec string
+	ACodec string
+	ABR    float64
+}
+
 // scanLines reads lines from r, parses progress events and sends them to ch.
 // "downloading" events are throttled to at most one per 100ms; all other status
 // events (finished, started, etc.) are sent immediately.
-// If extractPath is true, any non-info line that is not a progress event is
-// recorded as the final filepath (from --print after_move:filepath) and returned.
-func scanLines(r io.Reader, ch chan<- Progress, extractPath bool) string {
+// When result != nil, lines matching the strict `<key>=<value>` prefixes
+// emitted by our --print after_move: flags are parsed into the struct.
+func scanLines(r io.Reader, ch chan<- Progress, result *DownloadResult) {
 	const minInterval = 100 * time.Millisecond
-	var finalPath string
 	var lastSent time.Time
 
 	scanner := bufio.NewScanner(r)
@@ -152,24 +212,70 @@ func scanLines(r io.Reader, ch chan<- Progress, extractPath bool) string {
 				}
 				continue
 			}
-			// Non-progress, non-info line: filepath from --print after_move:filepath.
-			if extractPath && !strings.HasPrefix(line, "[") {
-				finalPath = line
+			if result != nil {
+				parseDownloadResultLine(line, result)
 			}
 		}
 	}
-	return finalPath
 }
 
+// parseDownloadResultLine recognizes the five tagged `--print after_move:`
+// outputs emitted by Download and populates the result. Unknown lines are
+// ignored (strict prefix match — no heuristic filepath detection).
+func parseDownloadResultLine(line string, r *DownloadResult) {
+	idx := strings.IndexByte(line, '=')
+	if idx <= 0 {
+		return
+	}
+	key, val := line[:idx], line[idx+1:]
+	if val == "NA" {
+		val = ""
+	}
+	switch key {
+	case "filepath":
+		r.Path = val
+	case "height":
+		if n, err := strconv.Atoi(val); err == nil {
+			r.Height = n
+		}
+	case "vcodec":
+		r.VCodec = val
+	case "acodec":
+		r.ACodec = val
+	case "abr":
+		if f, err := strconv.ParseFloat(val, 64); err == nil {
+			r.ABR = f
+		}
+	}
+}
+
+// downloadOutputTemplate is the yt-dlp -o value used for every download.
+// Kept deliberately plain (no quality tag baked in) so that both single-video
+// and playlist flows produce the identical pre-rename shape
+// `.tmp.<title>_[<id>].<ext>`, which manager.renameWithQualityTag then
+// transforms into `<title>_[<id>]_<tag>.<ext>`.
+// If you change this template, update renameWithQualityTag and its tests
+// (`TestRenameWithQualityTag` in manager_test.go) to match the new shape.
+const downloadOutputTemplate = ".tmp.%(title)s_[%(id)s].%(ext)s"
+
 // Download starts a download and sends progress updates to progressCh.
-// Returns the final filepath of the downloaded file.
-func (y *YtDlp) Download(ctx context.Context, url, formatID, outputDir, qualityTag string, progressCh chan<- Progress) (string, error) {
+// Returns the final filepath plus yt-dlp-reported format metadata (height,
+// vcodec, acodec, abr) so the caller can build a clean filename quality tag
+// after merge/post-processing, when the resolved codecs are known.
+//
+// FormatID is passed to yt-dlp's -f flag unchanged — it may be a specific
+// format id ("248+251") for single-video downloads or a selector expression
+// ("bv*[vcodec^=vp9]+ba*[acodec^=opus]/b") for playlist downloads. yt-dlp
+// treats both uniformly and emits the same post-merge metadata, so the
+// filename tag built by the caller is flow-independent by construction.
+func (y *YtDlp) Download(ctx context.Context, url, formatID, outputDir string, progressCh chan<- Progress) (*DownloadResult, error) {
 	defer close(progressCh)
 
 	args := []string{
 		"--color", "never",
 		"--newline",
 		"--no-warnings",
+		"--no-playlist",
 		"--progress",
 		"--progress-template", "download:%(progress)j",
 		"--progress-template", "postprocess:%(progress)j",
@@ -177,8 +283,13 @@ func (y *YtDlp) Download(ctx context.Context, url, formatID, outputDir, qualityT
 		"--no-part",
 		"--no-mtime",
 		"-P", outputDir,
-		"-o", ".tmp.%(title)s_[%(id)s]_" + qualityTag + ".%(ext)s",
-		"--print", "after_move:filepath",
+		"-o", downloadOutputTemplate,
+		// Tagged key=value prints; parsed by parseDownloadResultLine.
+		"--print", "after_move:filepath=%(filepath)s",
+		"--print", "after_move:height=%(height)s",
+		"--print", "after_move:vcodec=%(vcodec)s",
+		"--print", "after_move:acodec=%(acodec)s",
+		"--print", "after_move:abr=%(abr)s",
 	}
 
 	if formatID != "" {
@@ -193,23 +304,25 @@ func (y *YtDlp) Download(ctx context.Context, url, formatID, outputDir, qualityT
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return "", fmt.Errorf("failed to create stdout pipe: %w", err)
+		return nil, fmt.Errorf("failed to create stdout pipe: %w", err)
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		return "", fmt.Errorf("failed to create stderr pipe: %w", err)
+		return nil, fmt.Errorf("failed to create stderr pipe: %w", err)
 	}
 
 	if err := cmd.Start(); err != nil {
-		return "", fmt.Errorf("failed to start yt-dlp: %w", err)
+		return nil, fmt.Errorf("failed to start yt-dlp: %w", err)
 	}
 
 	// Scan stderr in a goroutine so stdout is drained concurrently.
+	// stderr carries progress only; our tagged prints go to stdout.
 	var wg sync.WaitGroup
-	wg.Go(func() { scanLines(stderr, progressCh, false) })
+	wg.Go(func() { scanLines(stderr, progressCh, nil) })
 
-	// Scan stdout for progress events and the final filepath.
-	finalPath := scanLines(stdout, progressCh, true)
+	// Scan stdout for progress events and the tagged metadata prints.
+	result := &DownloadResult{}
+	scanLines(stdout, progressCh, result)
 
 	// Wait for the stderr goroutine to finish draining before cmd.Wait()
 	// closes the pipes. When the process exits its stderr fd is closed,
@@ -217,8 +330,8 @@ func (y *YtDlp) Download(ctx context.Context, url, formatID, outputDir, qualityT
 	wg.Wait()
 
 	if err := cmd.Wait(); err != nil {
-		return "", fmt.Errorf("yt-dlp exited with error: %w", err)
+		return nil, fmt.Errorf("yt-dlp exited with error: %w", err)
 	}
 
-	return finalPath, nil
+	return result, nil
 }

@@ -38,23 +38,88 @@ type JobProgress struct {
 
 // Job represents a download task.
 type Job struct {
-	ID         string      `json:"id"`
-	URL        string      `json:"url"`
-	Title      string      `json:"title"`
-	FormatID   string      `json:"format_id"`
-	Status     JobStatus   `json:"status"`
-	Progress   JobProgress `json:"progress"`
-	Filename   string      `json:"filename"`
-	Error      string      `json:"error,omitempty"`
-	CreatedAt  time.Time   `json:"created_at"`
-	FinishedAt time.Time   `json:"finished_at,omitempty"`
-	QualityTag string      `json:"quality_tag,omitempty"`
+	ID            string      `json:"id"`
+	URL           string      `json:"url"`
+	Title         string      `json:"title"`
+	FormatID      string      `json:"format_id"`
+	Status        JobStatus   `json:"status"`
+	Progress      JobProgress `json:"progress"`
+	Filename      string      `json:"filename"`
+	Error         string      `json:"error,omitempty"`
+	CreatedAt     time.Time   `json:"created_at"`
+	FinishedAt    time.Time   `json:"finished_at,omitempty"`
+	QualityTag    string      `json:"quality_tag,omitempty"`
+	PlaylistTitle string      `json:"playlist_title,omitempty"`
 
 	cancel context.CancelFunc
 }
 
-// buildQualityTag computes a filename-safe quality/codec string from format metadata.
-// For video formats it uses height and vcodec; for audio-only it uses abr and acodec.
+// renameWithQualityTag transforms a `.tmp.<stem>.<ext>` path into
+// `<stem>_<tag>.<ext>` and performs the rename on disk. If the rename fails
+// the original path is returned so the job still has a valid filename.
+//
+// This is the single filename-shaping step for ALL downloads — single-video
+// and playlist flows both pass through here. Contract is pinned by
+// `TestRenameWithQualityTag` and `TestBuildQualityTag_ConsistentAcrossFlows`
+// in manager_test.go. Do not branch on flow type when naming files; if the
+// tag is wrong, fix buildQualityTag / normalizeCodec so every caller
+// benefits.
+func renameWithQualityTag(tmpPath, tag string) string {
+	dir := filepath.Dir(tmpPath)
+	base := filepath.Base(tmpPath)
+	stripped := strings.TrimPrefix(base, ".tmp.")
+	if stripped == base {
+		// Defensive: unexpected filename shape — return as-is.
+		return tmpPath
+	}
+	ext := filepath.Ext(stripped)
+	stem := strings.TrimSuffix(stripped, ext)
+	newBase := stem
+	if tag != "" {
+		newBase += "_" + tag
+	}
+	newBase += ext
+	newPath := filepath.Join(dir, newBase)
+	if err := os.Rename(tmpPath, newPath); err != nil {
+		return tmpPath
+	}
+	return newPath
+}
+
+// normalizeCodec collapses verbose yt-dlp codec strings (e.g. "avc1.640028",
+// "mp4a.40.2", "vp09.00.41.08") into short, human-readable names for
+// filenames. Unrecognized inputs fall back to the portion before the first
+// dot, lowercased. Empty / "none" / "NA" → "" (caller treats as absent).
+func normalizeCodec(c string) string {
+	c = strings.ToLower(strings.TrimSpace(c))
+	if c == "" || c == "none" || c == "na" {
+		return ""
+	}
+	head := c
+	if i := strings.IndexByte(head, '.'); i > 0 {
+		head = head[:i]
+	}
+	switch head {
+	case "avc1", "avc3":
+		return "h264"
+	case "hev1", "hvc1":
+		return "h265"
+	case "vp09":
+		return "vp9"
+	case "mp4a":
+		return "aac"
+	case "ac-3":
+		return "ac3"
+	case "ec-3":
+		return "eac3"
+	}
+	return head
+}
+
+// buildQualityTag computes a filename-safe quality/codec string from format
+// metadata reported by yt-dlp after download/merge. For video formats it uses
+// height and normalized vcodec; for audio-only it uses abr and normalized
+// acodec.
 func buildQualityTag(height int, abr float64, vcodec, acodec string) string {
 	sanitize := func(s string) string {
 		return strings.Map(func(r rune) rune {
@@ -65,21 +130,21 @@ func buildQualityTag(height int, abr float64, vcodec, acodec string) string {
 			return '_'
 		}, s)
 	}
-	audioOnly := height == 0 && (vcodec == "" || vcodec == "none")
-	if audioOnly {
-		codec := acodec
-		if codec == "" || codec == "none" {
+	vc := normalizeCodec(vcodec)
+	ac := normalizeCodec(acodec)
+	if height == 0 && vc == "" {
+		codec := ac
+		if codec == "" {
 			codec = "audio"
 		}
 		return fmt.Sprintf("%.0fkbps_%s", abr, sanitize(codec))
 	}
-	vc := vcodec
-	if vc == "" || vc == "none" {
+	if vc == "" {
 		vc = "video"
 	}
 	tag := fmt.Sprintf("%dp_%s", height, sanitize(vc))
-	if acodec != "" && acodec != "none" {
-		tag += "_" + sanitize(acodec)
+	if ac != "" {
+		tag += "_" + sanitize(ac)
 	}
 	return tag
 }
@@ -109,7 +174,9 @@ type Manager struct {
 func NewManager(ytdlp *YtDlp, downloadDir string, maxConcurrent int) *Manager {
 	m := &Manager{
 		jobs:        make(map[string]*Job),
-		queue:       make(chan *Job, 100),
+		// Buffer sized to comfortably hold a queued playlist (thousands of jobs)
+		// so Submit() never blocks the HTTP handler waiting for workers.
+		queue:       make(chan *Job, 10000),
 		ytdlp:       ytdlp,
 		downloadDir: downloadDir,
 		subscribers: make(map[string]chan JobEvent),
@@ -127,15 +194,18 @@ func NewManager(ytdlp *YtDlp, downloadDir string, maxConcurrent int) *Manager {
 }
 
 // Submit creates a new download job and enqueues it.
-func (m *Manager) Submit(url, formatID, title string, height int, vcodec, acodec string, abr float64) *Job {
+// playlistTitle is optional; when set, the job is part of a playlist batch and
+// the UI groups sibling jobs together. QualityTag is populated after the
+// download completes, from metadata yt-dlp reports for the resolved format.
+func (m *Manager) Submit(url, formatID, title, playlistTitle string) *Job {
 	job := &Job{
-		ID:         uuid.New().String(),
-		URL:        url,
-		Title:      title,
-		FormatID:   formatID,
-		Status:     StatusQueued,
-		CreatedAt:  time.Now(),
-		QualityTag: buildQualityTag(height, abr, vcodec, acodec),
+		ID:            uuid.New().String(),
+		URL:           url,
+		Title:         title,
+		FormatID:      formatID,
+		Status:        StatusQueued,
+		CreatedAt:     time.Now(),
+		PlaylistTitle: playlistTitle,
 	}
 
 	m.mu.Lock()
@@ -312,7 +382,7 @@ func (m *Manager) processJob(job *Job) {
 		}
 	}()
 
-	finalPath, err := m.ytdlp.Download(ctx, job.URL, job.FormatID, m.downloadDir, job.QualityTag, progressCh)
+	result, err := m.ytdlp.Download(ctx, job.URL, job.FormatID, m.downloadDir, progressCh)
 	<-done // Wait for progress reader to finish
 
 	m.mu.Lock()
@@ -335,16 +405,12 @@ func (m *Manager) processJob(job *Job) {
 	job.Status = StatusComplete
 	job.Progress.Percent = 100
 	job.FinishedAt = time.Now()
-	if finalPath != "" {
-		// Rename .tmp.<name> → <name> now that the download is complete.
-		dir := filepath.Dir(finalPath)
-		base := filepath.Base(finalPath)
-		if newBase := strings.TrimPrefix(base, ".tmp."); newBase != base {
-			newPath := filepath.Join(dir, newBase)
-			if err := os.Rename(finalPath, newPath); err == nil {
-				finalPath = newPath
-			}
-		}
+	if result != nil && result.Path != "" {
+		tag := buildQualityTag(result.Height, result.ABR, result.VCodec, result.ACodec)
+		job.QualityTag = tag
+		// Rename `.tmp.<stem>.<ext>` → `<stem>_<tag>.<ext>` in one step now
+		// that the download is complete and the real codecs are known.
+		finalPath := renameWithQualityTag(result.Path, tag)
 		job.Filename = filepath.Base(finalPath)
 	}
 	m.mu.Unlock()

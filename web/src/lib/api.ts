@@ -1,4 +1,4 @@
-import type { VideoInfo, Job, FileInfo, Format } from "../types";
+import type { Job, FileInfo, Format, ResolveResult } from "../types";
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(url, {
@@ -12,10 +12,15 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
-export async function fetchFormats(url: string): Promise<VideoInfo> {
-  return request<VideoInfo>("/api/formats", {
+export type ResolveMode = "" | "video" | "playlist";
+
+export async function resolveUrl(
+  url: string,
+  mode: ResolveMode = ""
+): Promise<ResolveResult> {
+  return request<ResolveResult>("/api/resolve", {
     method: "POST",
-    body: JSON.stringify({ url }),
+    body: JSON.stringify({ url, mode }),
   });
 }
 
@@ -35,14 +40,27 @@ export async function startDownload(
 
   return request<Job>("/api/downloads", {
     method: "POST",
+    body: JSON.stringify({ url, format_id: formatId, title }),
+  });
+}
+
+// startPlaylistItemDownload submits a single video from a playlist, using a
+// raw yt-dlp format selector (e.g. "bv*[vcodec^=vp9]+ba*[acodec^=opus]/b")
+// instead of pre-picked format IDs. The backend fills in the filename
+// quality tag post-download from yt-dlp-reported metadata.
+export async function startPlaylistItemDownload(
+  url: string,
+  formatSelector: string,
+  title: string,
+  playlistTitle: string
+): Promise<Job> {
+  return request<Job>("/api/downloads", {
+    method: "POST",
     body: JSON.stringify({
       url,
-      format_id: formatId,
+      format_id: formatSelector,
       title,
-      height: video?.height ?? 0,
-      vcodec: video?.vcodec ?? "",
-      acodec: audio?.acodec ?? video?.acodec ?? "",
-      abr: audio?.abr ?? video?.abr ?? 0,
+      playlist_title: playlistTitle,
     }),
   });
 }
