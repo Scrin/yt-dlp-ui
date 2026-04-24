@@ -15,25 +15,34 @@ A: I am lazy, and I didn't want to bother with downloading/installing yt-dlp to 
 
 ## Features
 
-- Paste a URL to fetch available formats (resolution, codec, file size)
-- Full format picker — choose exactly what quality/format to download
-- List and download completed files
-- Single binary/image distribution with embedded web UI
+- Paste a URL to fetch available formats (resolution, codec, bitrate, file size)
+- Full format picker — pick a video stream, an audio stream, or both; yt-dlp merges them via ffmpeg
+- Concurrent download queue with live progress streamed over Server-Sent Events
+- Cancel queued or running downloads
+- List completed files, download them from the browser, or delete them
+- Single static binary / single container image with the web UI embedded
 
 ## Quick Start (Docker)
 
+A prebuilt image is published on GHCR:
+
 ```bash
-docker build -t yt-dlp-ui .
-docker run -p 8080:8080 -v yt-dlp-downloads:/downloads yt-dlp-ui
+docker run -d \
+  --name yt-dlp-ui \
+  -p 8080:8080 \
+  -v yt-dlp-downloads:/downloads \
+  ghcr.io/scrin/yt-dlp-ui
 ```
 
 Open http://localhost:8080
+
+Downloaded files live in the `yt-dlp-downloads` named volume (mounted at `/downloads` inside the container). Swap it for a bind mount like `-v /path/on/host:/downloads` to write directly to the host.
 
 ## Development
 
 ### Prerequisites
 
-- Go 1.22+
+- Go 1.25+
 - Node.js 22+
 - yt-dlp installed locally (for testing downloads)
 - ffmpeg (for format merging)
@@ -65,6 +74,12 @@ cd web && npm ci && npm run build && cd ..
 go build -trimpath -ldflags="-s -w" -o yt-dlp-ui ./cmd/yt-dlp-ui
 ```
 
+Or build the container image yourself:
+
+```bash
+docker build -t yt-dlp-ui .
+```
+
 ## Configuration
 
 All configuration is via environment variables:
@@ -75,3 +90,5 @@ All configuration is via environment variables:
 | `DOWNLOAD_DIR`   | `./downloads` | Directory for downloaded files |
 | `MAX_CONCURRENT` | `2`           | Maximum parallel downloads     |
 | `YT_DLP_PATH`    | `yt-dlp`      | Path to yt-dlp binary          |
+
+In the container image, `DOWNLOAD_DIR` defaults to `/downloads` and `PORT` to `8080`.
