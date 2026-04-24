@@ -1,7 +1,9 @@
-import { memo, useCallback, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import type { PlaylistInfo } from "../types";
 import { startPlaylistItemDownload } from "../lib/api";
+import { useExistingDownloads } from "../hooks/useExistingDownloads";
+import { extractQualityTag } from "../lib/filenameId";
 
 interface Props {
   playlist: PlaylistInfo;
@@ -92,8 +94,27 @@ export function PlaylistPicker({ playlist, onClose }: Props) {
     return out;
   }, [playlist.entries]);
 
+  const { byId: existingByID, loaded: existingLoaded } = useExistingDownloads();
+
+  // Default selection starts with everything selected. Once the existing-files
+  // snapshot lands, we switch the default to "only not-yet-downloaded" — but
+  // only if the user hasn't already interacted with selections (tracked via
+  // userTouchedSelection). That way the /api/files fetch doesn't blow away a
+  // user who toggled rows before the snapshot arrived.
   const [selectedIds, setSelectedIds] = useState<Set<string>>(
     () => new Set(entries.map((e) => e.id))
+  );
+  const userTouchedSelection = useRef(false);
+  useEffect(() => {
+    if (!existingLoaded || userTouchedSelection.current) return;
+    setSelectedIds(
+      new Set(entries.filter((e) => !existingByID.has(e.id)).map((e) => e.id))
+    );
+  }, [existingLoaded, existingByID, entries]);
+
+  const alreadyDownloadedCount = useMemo(
+    () => entries.filter((e) => existingByID.has(e.id)).length,
+    [entries, existingByID]
   );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -109,6 +130,7 @@ export function PlaylistPicker({ playlist, onClose }: Props) {
   // useCallback so EntryRow's onToggle reference is stable across renders,
   // letting React.memo skip re-rendering rows whose `selected` didn't change.
   const handleToggle = useCallback((id: string) => {
+    userTouchedSelection.current = true;
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -117,11 +139,14 @@ export function PlaylistPicker({ playlist, onClose }: Props) {
     });
   }, []);
 
-  const selectAll = useCallback(
-    () => setSelectedIds(new Set(entries.map((e) => e.id))),
-    [entries]
-  );
-  const selectNone = useCallback(() => setSelectedIds(new Set()), []);
+  const selectAll = useCallback(() => {
+    userTouchedSelection.current = true;
+    setSelectedIds(new Set(entries.map((e) => e.id)));
+  }, [entries]);
+  const selectNone = useCallback(() => {
+    userTouchedSelection.current = true;
+    setSelectedIds(new Set());
+  }, []);
 
   const handleDownload = async () => {
     const toDownload = entries.filter((e) => selectedIds.has(e.id));
@@ -230,7 +255,8 @@ export function PlaylistPicker({ playlist, onClose }: Props) {
         <div className="mb-4">
           <div className="mb-2 flex items-center justify-between">
             <h3 className="text-xs font-medium uppercase tracking-wider text-zinc-500">
-              Videos ({selectedCount}/{entries.length} selected)
+              Videos ({selectedCount}/{entries.length} selected
+              {alreadyDownloadedCount > 0 && ` · ${alreadyDownloadedCount} already downloaded`})
             </h3>
             <div className="flex gap-3 text-xs">
               <button
@@ -250,18 +276,26 @@ export function PlaylistPicker({ playlist, onClose }: Props) {
             </div>
           </div>
           <div className="max-h-72 space-y-1 overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-950 p-1">
-            {entries.map((entry, idx) => (
-              <EntryRow
-                key={entry.id}
-                id={entry.id}
-                index={idx}
-                title={entry.title}
-                duration={entry.duration}
-                selected={selectedIds.has(entry.id)}
-                disabled={submitting}
-                onToggle={handleToggle}
-              />
-            ))}
+            {entries.map((entry, idx) => {
+              const existing = existingByID.get(entry.id);
+              const existingTag = existing
+                ? extractQualityTag(existing[0].name) ?? ""
+                : "";
+              return (
+                <EntryRow
+                  key={entry.id}
+                  id={entry.id}
+                  index={idx}
+                  title={entry.title}
+                  duration={entry.duration}
+                  selected={selectedIds.has(entry.id)}
+                  disabled={submitting}
+                  downloaded={!!existing}
+                  downloadedTag={existingTag}
+                  onToggle={handleToggle}
+                />
+              );
+            })}
           </div>
         </div>
 
@@ -310,6 +344,8 @@ const EntryRow = memo(function EntryRow({
   duration,
   selected,
   disabled,
+  downloaded,
+  downloadedTag,
   onToggle,
 }: {
   id: string;
@@ -318,6 +354,8 @@ const EntryRow = memo(function EntryRow({
   duration: number;
   selected: boolean;
   disabled: boolean;
+  downloaded: boolean;
+  downloadedTag: string;
   onToggle: (id: string) => void;
 }) {
   return (
@@ -337,7 +375,17 @@ const EntryRow = memo(function EntryRow({
       <span className="w-8 flex-shrink-0 text-right font-mono text-xs text-zinc-600">
         {index + 1}
       </span>
-      <span className="min-w-0 flex-1 truncate">{title}</span>
+      <span className={`min-w-0 flex-1 truncate ${downloaded ? "text-zinc-500" : ""}`}>
+        {title}
+      </span>
+      {downloaded && (
+        <span
+          className="flex-shrink-0 rounded-full border border-emerald-900 bg-emerald-950/50 px-1.5 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wide text-emerald-400"
+          title={downloadedTag ? `Already downloaded as ${downloadedTag}` : "Already downloaded"}
+        >
+          ✓ {downloadedTag || "downloaded"}
+        </span>
+      )}
       {duration > 0 && (
         <span className="flex-shrink-0 font-mono text-xs text-zinc-500">
           {formatDuration(duration)}

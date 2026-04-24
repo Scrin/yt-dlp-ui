@@ -2,6 +2,8 @@ import { useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import type { VideoInfo, Format } from "../types";
 import { startDownload } from "../lib/api";
+import { useExistingDownloads } from "../hooks/useExistingDownloads";
+import { extractQualityTag } from "../lib/filenameId";
 
 interface Props {
   videoInfo: VideoInfo;
@@ -76,6 +78,9 @@ export function FormatPicker({ videoInfo, onClose }: Props) {
     g.audio.sort((a, b) => (b.abr || 0) - (a.abr || 0));
     return g;
   }, [videoInfo.formats]);
+
+  const { byId: existingByID } = useExistingDownloads();
+  const existingForThisVideo = existingByID.get(videoInfo.id) ?? [];
 
   // On mount, preselect sensible defaults: top video, plus top audio only when
   // the top video is video-only (combined videos already carry audio).
@@ -155,6 +160,37 @@ export function FormatPicker({ videoInfo, onClose }: Props) {
             ✕
           </button>
         </div>
+
+        {existingForThisVideo.length > 0 && (
+          <div className="mb-4 rounded-lg border border-emerald-950 bg-emerald-950/30 px-3 py-2">
+            <p className="text-xs font-medium uppercase tracking-wider text-emerald-400">
+              Already downloaded
+            </p>
+            <ul className="mt-1.5 space-y-1">
+              {existingForThisVideo.map((f) => {
+                const tag = extractQualityTag(f.name);
+                return (
+                  <li key={f.name} className="flex items-center gap-2 text-sm">
+                    <a
+                      href={`/files/${encodeURIComponent(f.name)}`}
+                      download
+                      title={f.name}
+                      className="min-w-0 flex-1 truncate font-mono text-xs text-emerald-300 hover:text-emerald-200"
+                    >
+                      {tag ?? f.name}
+                    </a>
+                    <span className="flex-shrink-0 text-xs text-zinc-500">
+                      {formatBytes(f.size)}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+            <p className="mt-1.5 text-[11px] text-zinc-500">
+              You can still download a different version below.
+            </p>
+          </div>
+        )}
 
         {(["video", "audio"] as FormatGroup[]).map((group) => {
           if (groups[group].length === 0) return null;
